@@ -1,0 +1,10 @@
+Global:
+  tool: build_submitter
+Default:
+  profile: [test]
+Profiles:
+  - profile:
+  name: test
+  env: centos4u3
+  command: mkdir output && cp ci.yml output/ && echo hello ci-build
+  release: true
