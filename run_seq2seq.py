@@ -12,6 +12,7 @@
 
 import os
 import json
+import shutil
 import logging
 import argparse
 import torch
@@ -178,7 +179,7 @@ def main():
         # Logger definition
         logger = logging.getLogger(__name__)
         logging.basicConfig(level=logging.DEBUG, format="%(message)s")
-        fh = logging.FileHandler(os.path.join(config.save_dir, "session.log"))
+        fh = logging.FileHandler(os.path.join(config.save_dir, "train.log"))
         logger.addHandler(fh)
 
         # Save config
@@ -186,6 +187,11 @@ def main():
         with open(params_file, 'w') as fp:
             json.dump(config.__dict__, fp, indent=4, sort_keys=True)
         print("Saved params to '{}'".format(params_file))
+
+        # Save source code
+        src_dir = "./dialnlp"
+        dst_dir = os.path.join(config.save_dir, "dialnlp")
+        shutil.copytree(src_dir, dst_dir)
 
         logger.info(model)
 
