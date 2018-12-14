@@ -218,6 +218,8 @@ class Trainer(object):
                                                    data_iter=self.valid_iter,
                                                    save_file=gen_save_file)
             self.logger.info(gen_eval_metrics)
+
+        self.save()
         self.logger.info('')
 
     def train(self):
@@ -226,7 +228,7 @@ class Trainer(object):
         for _ in range(self.epoch, self.num_epochs):
             self.train_epoch()
 
-    def save(self, is_best):
+    def save(self, is_best=False):
         model_file = os.path.join(
             self.save_dir, f"state_epoch_{self.epoch}.model")
         torch.save(self.model.state_dict(), model_file)
