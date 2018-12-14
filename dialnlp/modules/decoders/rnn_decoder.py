@@ -15,6 +15,7 @@ import torch.nn as nn
 
 from dialnlp.modules.attention import Attention
 from dialnlp.modules.decoders.state import RNNDecoderState
+from dialnlp.utils.misc import Pack
 from dialnlp.utils.misc import sequence_mask
 
 
@@ -106,19 +107,11 @@ class RNNDecoder(nn.Module):
         )
         return init_state
 
-    def decode(self, input, state, num_valid=None):
-        """
-        num_valid: number of valid input, just used in training phrase
-        """
-        hidden = state.get("hidden", num_valid)
-        if num_valid is not None:
-            hidden = hidden.clone()
-
+    def decode(self, input, state, is_training=False):
+        hidden = state.hidden
         rnn_input_list = []
         out_input_list = []
-
-        if num_valid is not None:
-            input = input[:num_valid]
+        output = Pack()
 
         if self.embedder is not None:
             input = self.embedder(input)
@@ -128,42 +121,42 @@ class RNNDecoder(nn.Module):
         rnn_input_list.append(input)
 
         if self.feature_size is not None:
-            feature = state.get("feature", num_valid).unsqueeze(1)
+            feature = state.feature.unsqueeze(1)
             rnn_input_list.append(feature)
 
-        attn = None
         if self.attn_mode is not None:
-            attn_memory = state.get("attn_memory", num_valid)
-            attn_mask = state.get("attn_mask", num_valid)
+            attn_memory = state.attn_memory
+            attn_mask = state.attn_mask
             query = hidden[-1].unsqueeze(1)
             weighted_context, attn = self.attention(query=query,
                                                     memory=attn_memory,
                                                     mask=attn_mask)
             rnn_input_list.append(weighted_context)
             out_input_list.append(weighted_context)
+            output.add(attn=attn)
 
         rnn_input = torch.cat(rnn_input_list, dim=-1)
         rnn_output, new_hidden = self.rnn(rnn_input, hidden)
         out_input_list.append(rnn_output)
 
         out_input = torch.cat(out_input_list, dim=-1)
-        if num_valid is None:
-            state.hidden = new_hidden
-            output = self.output_layer(out_input)
-        else:
-            state.hidden[:, :num_valid] = new_hidden
-            output = out_input
+        state.hidden = new_hidden
 
-        return output, state, attn
+        if is_training:
+            return out_input, state, output
+        else:
+            log_prob = self.output_layer(out_input)
+            return log_prob, state, output
 
     def forward(self, inputs, state):
         inputs, lengths = inputs
-        batch_size, max_dec_len = inputs.size()
+        batch_size, max_len = inputs.size()
 
-        outputs = inputs.new_zeros(
-            size=(batch_size, max_dec_len, self.out_input_size),
+        out_inputs = inputs.new_zeros(
+            size=(batch_size, max_len, self.out_input_size),
             dtype=torch.float)
 
+        # sort by lengths
         sorted_lengths, indices = lengths.sort(descending=True)
         inputs = inputs.index_select(0, indices)
         state = state.index_select(indices)
@@ -172,12 +165,17 @@ class RNNDecoder(nn.Module):
         num_valid_list = sequence_mask(sorted_lengths).int().sum(dim=0)
 
         for i, num_valid in enumerate(num_valid_list):
-            dec_input = inputs[:, i]
-            output, state, _ = self.decode(dec_input, state, num_valid)
-            outputs[:num_valid, i] = output.squeeze(1)
+            dec_input = inputs[:num_valid, i]
+            valid_state = state.slice_select(num_valid)
+            out_input, valid_state, _ = self.decode(
+                dec_input, valid_state, is_training=True)
+            state.hidden[:, :num_valid] = valid_state.hidden
+            out_inputs[:num_valid, i] = out_input.squeeze(1)
 
+        # Resort
         _, inv_indices = indices.sort()
         state = state.index_select(inv_indices)
-        outputs = outputs.index_select(0, inv_indices)
-        outputs = self.output_layer(outputs)
-        return outputs, state
+        out_inputs = out_inputs.index_select(0, inv_indices)
+
+        log_probs = self.output_layer(out_inputs)
+        return log_probs, state
