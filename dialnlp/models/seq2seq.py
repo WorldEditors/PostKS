@@ -120,13 +120,13 @@ class Seq2Seq(BaseModel):
         return outputs, dec_init_state
 
     def decode(self, input, state):
-        output, state, attn = self.decoder.decode(input, state)
-        return output, state, attn
+        log_prob, state, output = self.decoder.decode(input, state)
+        return log_prob, state, output
 
     def forward(self, enc_inputs, dec_inputs, hidden=None):
         outputs, dec_init_state = self.encode(enc_inputs, hidden)
-        dec_outputs, _ = self.decoder(dec_inputs, dec_init_state)
-        outputs.add(logits=dec_outputs)
+        log_probs, _ = self.decoder(dec_inputs, dec_init_state)
+        outputs.add(logits=log_probs)
         return outputs
 
     def collect_metrics(self, outputs, target):
