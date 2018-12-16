@@ -50,7 +50,7 @@ net_arg.add_argument("--with_project", type=str2bool, default=False)
 # Training / Testing
 train_arg = parser.add_argument_group("Training")
 train_arg.add_argument("--optimizer", type=str, default="Adam")
-train_arg.add_argument("--learning_rate", type=float, default=0.0002)
+train_arg.add_argument("--lr", type=float, default=0.0002)
 train_arg.add_argument("--grad_clip", type=float, default=5.0)
 train_arg.add_argument("--dropout", type=float, default=0.3)
 train_arg.add_argument("--num_epochs", type=int, default=10)
@@ -98,7 +98,7 @@ def main():
     test_iter = corpus.create_batches(
         config.batch_size, "test", shuffle=False, device=device)
 
-    # Model Definition
+    # Model definition
     model = DSSM(src_vocab_size=corpus.SRC.vocab_size,
                  tgt_vocab_size=corpus.TGT.vocab_size,
                  embed_size=config.embed_size,
@@ -156,25 +156,46 @@ def main():
 
         # Optimizer definition
         optimizer = getattr(torch.optim, config.optimizer)(
-            model.parameters(), lr=config.learning_rate)
+            model.parameters(), lr=config.lr)
 
+        # Learning rate scheduler
+        if config.lr_decay is not None and 0 < config.lr_decay < 1.0:
+            lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer=optimizer,
+                factor=config.lr_decay,
+                patience=1,
+                verbose=True,
+                min_lr=1e-5,
+            )
+        else:
+            lr_scheduler = None
+
+        # Save directory
         date_str, time_str = datetime.now().strftime("%Y%m%d-%H%M%S").split("-")
         result_str = "{}-{}".format(model_name, time_str)
         config.save_dir = os.path.join(config.save_dir, date_str, result_str)
         if not os.path.exists(config.save_dir):
             os.makedirs(config.save_dir)
 
-        # logger
+        # Logger definition
         logger = logging.getLogger(__name__)
         logging.basicConfig(level=logging.DEBUG, format="%(message)s")
         fh = logging.FileHandler(os.path.join(config.save_dir, "session.log"))
         logger.addHandler(fh)
 
-        # save config
+        # Save config
         params_file = os.path.join(config.save_dir, "params.json")
         with open(params_file, 'w') as fp:
             json.dump(config.__dict__, fp, indent=4, sort_keys=True)
         print("Saved params to '{}'".format(params_file))
+
+        # Save source code
+        module_src_dir = "./dialnlp"
+        module_dst_dir = os.path.join(config.save_dir, module_src_dir)
+        shutil.copytree(module_src_dir, module_dst_dir)
+        script_src_file = sys.argv[0]
+        script_dst_file = os.path.join(config.save_dir, script_src_file)
+        shutil.copy(script_src_file, script_dst_file)
 
         logger.info(model)
 
@@ -191,6 +212,7 @@ def main():
                           log_steps=config.log_steps,
                           valid_steps=config.valid_steps,
                           grad_clip=config.grad_clip,
+                          lr_scheduler=lr_scheduler,
                           save_summary=True)
         trainer.train()
         logger.info("Training done!")
