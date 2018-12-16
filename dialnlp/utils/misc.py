@@ -120,7 +120,7 @@ def list2tensor(X):
 
 def one_hot(indice, num_classes):
     I = torch.eye(num_classes).to(indice.device)
-    T = I[num_classes]
+    T = I[indice]
     return T
 
 
