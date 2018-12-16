@@ -29,7 +29,7 @@ def accuracy(logits, targets, padding_idx=None):
         weights = targets.ne(padding_idx).float()
         acc = (weights * trues).sum(dim=1) / weights.sum(dim=1)
     else:
-        acc = trues.sum(dim=1) / trues.size(1)
+        acc = trues.mean(dim=1)
     acc = acc.mean()
     return acc
 
