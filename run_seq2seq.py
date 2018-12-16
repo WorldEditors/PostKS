@@ -11,6 +11,7 @@
 ################################################################################
 
 import os
+import sys
 import json
 import shutil
 import logging
@@ -189,9 +190,12 @@ def main():
         print("Saved params to '{}'".format(params_file))
 
         # Save source code
-        src_dir = "./dialnlp"
-        dst_dir = os.path.join(config.save_dir, "dialnlp")
-        shutil.copytree(src_dir, dst_dir)
+        module_src_dir = "./dialnlp"
+        module_dst_dir = os.path.join(config.save_dir, module_src_dir)
+        shutil.copytree(module_src_dir, module_dst_dir)
+        script_src_file = sys.argv[0]
+        script_dst_file = os.path.join(config.save_dir, script_src_file)
+        shutil.copy(script_src_file, script_dst_file)
 
         logger.info(model)
 
