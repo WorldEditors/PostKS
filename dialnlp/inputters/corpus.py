@@ -157,6 +157,16 @@ class Corpus(object):
         except KeyError:
             raise KeyError(f"Unsported data type: {data_type}!")
 
+    def transform(self, data_file, batch_size, data_type="test", shuffle=False, device=None):
+        """
+        Transform raw text from data_file to Dataset and create data loader.
+        """
+        raw_data = self.read_data(data_file, data_type=data_type)
+        examples = self.build_examples(raw_data)
+        data = Dataset(examples)
+        data_loader = data.create_batches(batch_size, shuffle, device)
+        return data_loader
+
 
 class SrcTgtCorpus(Corpus):
     def __init__(self,
@@ -204,7 +214,7 @@ class SrcTgtCorpus(Corpus):
 
         self.padding_idx = self.TGT.stoi[self.TGT.pad_token]
 
-    def read_data(self, data_file, data_type):
+    def read_data(self, data_file, data_type="train"):
         data = []
         with open(data_file, "r", encoding="utf-8") as f:
             for line in f:
