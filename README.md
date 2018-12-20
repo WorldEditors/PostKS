@@ -2,6 +2,10 @@
 
 ## Quick Start
 
+### Requirement
+* PyTorch 0.4.1+
+* Python 3.5+
+
 ### Data Preparation
 Put train/valid/test data files in `data/` folder with the same prefix:
 * `$prefix.train`
