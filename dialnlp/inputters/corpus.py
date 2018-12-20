@@ -40,7 +40,8 @@ class Corpus(object):
         self.sort_fn = None
         self.data = None
 
-    def load_data(self, prepared_data_file):
+    def load_data(self, prepared_data_file=None):
+        prepared_data_file = prepared_data_file or self.prepared_data_file
         print(f"Loading prepared data from {prepared_data_file} ...")
         data = torch.load(prepared_data_file)
         self.data = {"train": Dataset(data['train']),
@@ -50,6 +51,7 @@ class Corpus(object):
               " ".join(f"{k.upper()}-{len(v)}" for k, v in self.data.items()))
 
     def load_vocab(self, prepared_vocab_file):
+        prepared_vocab_file = prepared_vocab_file or self.prepared_vocab_file
         print(f"Loading prepared vocab from {prepared_vocab_file} ...")
         vocab_dict = torch.load(prepared_vocab_file)
 
@@ -60,7 +62,7 @@ class Corpus(object):
               " ".join(f"{name.upper()}-{field.vocab_size}" for name, field in
                        self.fields.items() if isinstance(field, TextField)))
 
-    def read_data(self, data_file, data_type):
+    def read_data(self, data_file, data_type=None):
         """
         Returns
         -------
@@ -102,19 +104,14 @@ class Corpus(object):
         data: ``List[Dict]``
         """
         examples = []
-        ignored = 0
         for raw_data in tqdm(data):
             example = {}
             for name, strings in raw_data.items():
                 example[name] = self.fields[name].numericalize(strings)
-            if self.filter_pred is None or self.filter_pred(example):
-                examples.append(example)
-            else:
-                ignored += 1
+            examples.append(example)
         if self.sort_fn is not None:
             print(f"Sorting examples ...")
             examples = self.sort_fn(examples)
-        print(f"Built {len(examples)} examples ({ignored} ignored)")
         return examples
 
     def build(self):
@@ -157,7 +154,8 @@ class Corpus(object):
         except KeyError:
             raise KeyError(f"Unsported data type: {data_type}!")
 
-    def transform(self, data_file, batch_size, data_type="test", shuffle=False, device=None):
+    def transform(self, data_file, batch_size,
+                  data_type="test", shuffle=False, device=None):
         """
         Transform raw text from data_file to Dataset and create data loader.
         """
@@ -197,10 +195,10 @@ class SrcTgtCorpus(Corpus):
         self.fields = {'src': self.SRC, 'tgt': self.TGT}
 
         def src_filter_pred(src):
-            return min_len <= len(src)-2 <= max_len
+            return min_len <= len(self.SRC.tokenize_fn(src)) <= max_len
 
         def tgt_filter_pred(tgt):
-            return min_len <= len(tgt)-2 <= max_len
+            return min_len <= len(self.TGT.tokenize_fn(tgt)) <= max_len
 
         self.filter_pred = lambda ex: src_filter_pred(
             ex['src']) and tgt_filter_pred(ex['tgt'])
@@ -216,8 +214,16 @@ class SrcTgtCorpus(Corpus):
 
     def read_data(self, data_file, data_type="train"):
         data = []
+        filtered = 0
         with open(data_file, "r", encoding="utf-8") as f:
             for line in f:
                 src, tgt = line.strip().split('\t')[:2]
                 data.append({'src': src, 'tgt': tgt})
+
+        filtered_num = len(data)
+        if self.filter_pred is not None:
+            data = [ex for ex in data if self.filter_pred(ex)]
+        filtered_num -= len(data)
+        print(
+            f"Read {len(data)} {data_type.upper()} examples ({filtered_num} filtered)")
         return data
