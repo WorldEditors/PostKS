@@ -68,7 +68,7 @@ gen_arg.add_argument("--beam_size", type=int, default=10)
 gen_arg.add_argument("--max_dec_len", type=int, default=30)
 gen_arg.add_argument("--ignore_unk", type=str2bool, default=True)
 gen_arg.add_argument("--length_average", type=str2bool, default=True)
-misc_arg.add_argument("--gen_file", type=str, default="./test.result")
+gen_arg.add_argument("--gen_file", type=str, default="./test.result")
 
 # MISC
 misc_arg = parser.add_argument_group("Misc")
