@@ -13,6 +13,8 @@
 import torch
 
 from dialnlp.utils.misc import sequence_mask
+from dialnlp.utils.misc import list2tensor
+from dialnlp.utils.misc import Pack
 
 
 class TopKGenerator(object):
@@ -253,3 +255,29 @@ class TopKGenerator(object):
             if batch_cnt == num_batches:
                 break
         return results
+
+    def interact(self):
+        print("[*] Separate words by space")
+        print("[*] Use exit() to exit")
+        print("[*] Chating starts")
+        while True:
+            string = input("Human : ").strip()
+
+            if string == "exit()":
+                break
+            if string == "":
+                print("[*] Use exit() to exit")
+                continue
+
+            inputs = Pack()
+            src = self.src_field.numericalize([string])
+            inputs.add(src=list2tensor(src))
+            if self.use_gpu:
+                inputs = inputs.cuda()
+            _, preds, _, _ = self.forward(inputs=inputs, num_candidates=1)
+
+            src = self.src_field.denumericalize(src[0])
+            pred = self.tgt_field.denumericalize(preds[0][0])
+            print(f"Chabot: {pred}")
+            # print(f"┗( T﹏T )┛: {pred}")
+        print("[*] Chating ends")
