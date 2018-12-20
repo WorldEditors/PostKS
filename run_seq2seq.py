@@ -68,6 +68,7 @@ gen_arg.add_argument("--beam_size", type=int, default=10)
 gen_arg.add_argument("--max_dec_len", type=int, default=30)
 gen_arg.add_argument("--ignore_unk", type=str2bool, default=True)
 gen_arg.add_argument("--length_average", type=str2bool, default=True)
+misc_arg.add_argument("--gen_file", type=str, default="./test.result")
 
 # MISC
 misc_arg = parser.add_argument_group("Misc")
@@ -76,9 +77,9 @@ misc_arg.add_argument("--log_steps", type=int, default=50)
 misc_arg.add_argument("--valid_steps", type=int, default=100)
 misc_arg.add_argument("--batch_size", type=int, default=32)
 misc_arg.add_argument("--ckpt", type=str)
-misc_arg.add_argument("--test", action="store_true")
 misc_arg.add_argument("--check", action="store_true")
-misc_arg.add_argument("--gen_file", type=str, default="./test.result")
+misc_arg.add_argument("--test", action="store_true")
+misc_arg.add_argument("--interact", action="store_true")
 
 config = parser.parse_args()
 
@@ -135,7 +136,13 @@ def main():
                               length_average=config.length_average,
                               use_gpu=config.use_gpu)
 
-    if config.test and config.ckpt:
+    # Interactive generation testing
+    if config.interact and config.ckpt:
+        model.load(config.ckpt)
+        generator.interact()
+
+    # Testing
+    elif config.test and config.ckpt:
         print(model)
         model.load(config.ckpt)
 
