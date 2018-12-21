@@ -182,7 +182,10 @@ class TextField(Field):
                 for line in f:
                     w, vs = line.rstrip().split(maxsplit=1)
                     if w in self.stoi:
-                        vs = [float(x) for x in vs.split()]
+                        try:
+                            vs = [float(x) for x in vs.split(" ")]
+                        except Exception:
+                            vs = []
                         if len(vs) == dim:
                             embeds[self.stoi[w]] = vs
                             cover += 1
