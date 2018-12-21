@@ -58,7 +58,7 @@ class TopKGenerator(object):
 
         long_tensor_type = torch.cuda.LongTensor if self.use_gpu else torch.LongTensor
 
-        b = dec_state.hidden.size(1)
+        b = dec_state.get_batch_size()
 
         # [[0], [k*1], [k*2], ..., [k*(b-1)]]
         self.pos_index = (long_tensor_type(range(b)) * self.k).view(-1, 1)
