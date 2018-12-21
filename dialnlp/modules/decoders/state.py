@@ -11,22 +11,29 @@
 ################################################################################
 
 
-class RNNDecoderState(object):
+class DecoderState(object):
     """
-    State of RNN decoder.
+    State of Decoder.
     """
 
-    def __init__(self, hidden, **kwargs):
+    def __init__(self, hidden=None, **kwargs):
         """
         hidden: Tensor(num_layers, batch_size, hidden_size)
         """
-        self.hidden = hidden
+        if hidden is not None:
+            self.hidden = hidden
         for k, v in kwargs.items():
             if v is not None:
                 self.__setattr__(k, v)
 
     def __getattr__(self, name):
         return self.__dict__.get(name)
+
+    def get_batch_size(self):
+        if self.hidden is not None:
+            return self.hidden.size(1)
+        else:
+            return next(iter(self.__dict__.values())).size(0)
 
     def size(self):
         sizes = {k: v.size() for k, v in self.__dict__.items()}
@@ -39,7 +46,7 @@ class RNNDecoderState(object):
                 kwargs[k] = v[:, :stop].clone()
             else:
                 kwargs[k] = v[:stop]
-        return RNNDecoderState(**kwargs)
+        return DecoderState(**kwargs)
 
     def index_select(self, indices):
         kwargs = {}
@@ -48,7 +55,7 @@ class RNNDecoderState(object):
                 kwargs[k] = v.index_select(1, indices)
             else:
                 kwargs[k] = v.index_select(0, indices)
-        return RNNDecoderState(**kwargs)
+        return DecoderState(**kwargs)
 
     def mask_select(self, mask):
         kwargs = {}
@@ -57,7 +64,7 @@ class RNNDecoderState(object):
                 kwargs[k] = v[:, mask]
             else:
                 kwargs[k] = v[mask]
-        return RNNDecoderState(**kwargs)
+        return DecoderState(**kwargs)
 
     def _inflate_tensor(self, X, times):
         """
@@ -83,4 +90,4 @@ class RNNDecoderState(object):
                     num_layers, batch_size*times, -1)
             else:
                 kwargs[k] = self._inflate_tensor(v, times)
-        return RNNDecoderState(**kwargs)
+        return DecoderState(**kwargs)
