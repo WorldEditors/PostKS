@@ -14,7 +14,7 @@ import torch
 import torch.nn as nn
 
 from dialnlp.modules.attention import Attention
-from dialnlp.modules.decoders.state import RNNDecoderState
+from dialnlp.modules.decoders.state import DecoderState
 from dialnlp.utils.misc import Pack
 from dialnlp.utils.misc import sequence_mask
 
@@ -99,7 +99,7 @@ class RNNDecoder(nn.Module):
             max_len = attn_memory.size(1)
             attn_mask = sequence_mask(memory_lengths, max_len).eq(0)
 
-        init_state = RNNDecoderState(
+        init_state = DecoderState(
             hidden=hidden,
             feature=feature,
             attn_memory=attn_memory,
