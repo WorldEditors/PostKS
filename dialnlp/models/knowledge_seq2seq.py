@@ -15,7 +15,6 @@ import torch
 import torch.nn as nn
 from torch.nn.utils import clip_grad_norm_
 import torch.nn.functional as F
-import pdb
 
 from dialnlp.models.base_model import BaseModel
 from dialnlp.modules.embedder import Embedder
@@ -24,6 +23,7 @@ from dialnlp.modules.decoders.hgfu_rnn_decoder import RNNDecoder
 from dialnlp.utils.criterions import NLLLoss
 from dialnlp.utils.misc import Pack
 from dialnlp.utils.metrics import accuracy
+from dialnlp.utils.metrics import attn_accuracy
 from dialnlp.modules.attention import Attention
 
 class KnowledgeSeq2Seq(BaseModel):
@@ -42,7 +42,10 @@ class KnowledgeSeq2Seq(BaseModel):
                  dropout=0.0,
                  use_gpu=False,
                  use_bow=False,
-                 concat=False):
+                 use_kd=False,
+                 use_posterior=False,
+                 concat=False,
+                 pretrain_epoch=0):
         super(KnowledgeSeq2Seq, self).__init__()
 
         self.src_vocab_size = src_vocab_size
@@ -59,6 +62,9 @@ class KnowledgeSeq2Seq(BaseModel):
         self.dropout = dropout
         self.use_gpu = use_gpu
         self.use_bow = use_bow
+        self.use_kd = use_kd
+        self.use_posterior = use_posterior
+        self.pretrain_epoch = pretrain_epoch
 
         enc_embedder = Embedder(num_embeddings=self.src_vocab_size,
                                 embedding_dim=self.embed_size,
@@ -134,6 +140,9 @@ class KnowledgeSeq2Seq(BaseModel):
                               out_features=self.tgt_vocab_size),
                     nn.LogSoftmax(dim=-1))
 
+        if self.use_kd:
+            self.knowledge_dropout = nn.Dropout()
+
         if self.padding_idx is not None:
             weight = torch.ones(self.tgt_vocab_size)
             weight[self.padding_idx] = 0
@@ -172,7 +181,7 @@ class KnowledgeSeq2Seq(BaseModel):
         # hard attention
         knowledge = cue_outputs.gather(1, indexs.view(-1, 1, 1).repeat(1, 1, cue_outputs.size(-1)))
 
-        if True:
+        if self.use_posterior:
             tgt_enc_inputs = inputs.tgt[0][:, 1:-1], inputs.tgt[1]-2
             _, tgt_enc_hidden = self.knowledge_encoder(tgt_enc_inputs, hidden)
             posterior_weighted_cue, posterior_attn = self.posterior_attention(
@@ -190,11 +199,21 @@ class KnowledgeSeq2Seq(BaseModel):
             #knowledge = posterior_weighted_cue
             indexs = gumbel_attn.max(-1)[1]
             # indexs = posterior_attn.max(dim=1)[1]
+            if self.use_bow:
+                bow_logits = self.bow_output_layer(knowledge)
+                outputs.add(bow_logits=bow_logits)
+        elif is_training:
+            gumbel_attn = F.gumbel_softmax(torch.log(cue_attn+1e-10), 0.1, hard=True)
+            knowledge = torch.bmm(gumbel_attn.unsqueeze(1), cue_outputs)
+            indexs = gumbel_attn.max(-1)[1]
             
         outputs.add(indexs=indexs)
-        if self.use_bow:
-            bow_logits = self.bow_output_layer(knowledge)
-            outputs.add(bow_logits=bow_logits)
+        if 'index' in inputs.keys():
+            outputs.add(attn_index=inputs.index)
+
+        if self.use_kd:
+            knowledge = self.knowledge_dropout(knowledge)
+
 
         dec_init_state = self.decoder.initialize_state(
             hidden=enc_hidden,
@@ -225,20 +244,25 @@ class KnowledgeSeq2Seq(BaseModel):
         acc = accuracy(logits, target, padding_idx=self.padding_idx)
         metrics.add(nll=(nll_loss, num_words), acc=acc)
 
-        # kl loss
-        kl_loss = self.kl_loss(torch.log(outputs.prior_attn+1e-10), outputs.posterior_attn.detach())
-        metrics.add(kl=kl_loss)
-        if epoch == -1 or epoch >= 6 or self.use_bow is not True:
+        if self.use_posterior:
+            kl_loss = self.kl_loss(torch.log(outputs.prior_attn+1e-10), outputs.posterior_attn.detach())
+            if epoch == -1 or epoch > self.pretrain_epoch or self.use_bow is not True:
+                loss += nll_loss
+                loss += kl_loss
+            metrics.add(kl=kl_loss)
+            if self.use_bow:
+                bow_logits = outputs.bow_logits
+                bow_labels = target[:,:-1]
+                bow_logits = bow_logits.repeat(1, bow_labels.size(-1), 1)
+                bow = self.nll_loss(bow_logits, bow_labels)
+                loss += bow
+                metrics.add(bow=bow)
+            if 'attn_index' in outputs:
+                attn_acc = attn_accuracy(outputs.posterior_attn, outputs.attn_index)
+            metrics.add(attn_acc=attn_acc)
+        else:
             loss += nll_loss
-            loss += kl_loss
 
-        if self.use_bow:
-            bow_logits = outputs.bow_logits
-            bow_labels = target[:,:-1]
-            bow_logits = bow_logits.repeat(1, bow_labels.size(-1), 1)
-            bow = self.nll_loss(bow_logits, bow_labels)
-            loss += bow
-            metrics.add(bow=bow)
         metrics.add(loss=loss)
         return metrics
 
@@ -247,7 +271,7 @@ class KnowledgeSeq2Seq(BaseModel):
         dec_inputs = inputs.tgt[0][:, :-1], inputs.tgt[1]-1
         target = inputs.tgt[0][:, 1:]
 
-        outputs = self.forward(enc_inputs, dec_inputs, is_training=True)
+        outputs = self.forward(enc_inputs, dec_inputs, is_training=is_training)
         metrics = self.collect_metrics(outputs, target, epoch=epoch)
 
         loss = metrics.loss

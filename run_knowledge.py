@@ -34,6 +34,7 @@ data_arg = parser.add_argument_group("Data")
 data_arg.add_argument("--data_dir", type=str, default="./data/toy/")
 data_arg.add_argument("--data_prefix", type=str, default="dial")
 data_arg.add_argument("--save_dir", type=str, default="./outputs/toy/")
+data_arg.add_argument("--with_label", type=str2bool, default=False)
 # data_arg.add_argument("--embed_file", type=str, default=None)
 data_arg.add_argument("--embed_file", type=str,
                        default="./embeddings/glove.840B.300d.txt")
@@ -60,10 +61,13 @@ train_arg.add_argument("--lr", type=float, default=0.0002)
 train_arg.add_argument("--grad_clip", type=float, default=5.0)
 train_arg.add_argument("--dropout", type=float, default=0.3)
 train_arg.add_argument("--num_epochs", type=int, default=10)
+train_arg.add_argument("--pretrain_epoch", type=int, default=0)
 train_arg.add_argument("--lr_decay", type=float, default=None)
 train_arg.add_argument("--use_embed", type=str2bool, default=True)
 train_arg.add_argument("--use_bow", type=str2bool, default=True)
+train_arg.add_argument("--use_kd", type=str2bool, default=False)
 train_arg.add_argument("--decode_concat", type=str2bool, default=False)
+train_arg.add_argument("--use_posterior", type=str2bool, default=False)
 
 # Geneation
 gen_arg = parser.add_argument_group("Generation")
@@ -103,6 +107,7 @@ def main():
                              min_len=config.min_len,
                              max_len=config.max_len,
                              embed_file=config.embed_file,
+                             with_label=config.with_label,
                              share_vocab=config.share_vocab)
     corpus.load()
 
@@ -127,6 +132,8 @@ def main():
                              dropout=config.dropout,
                              use_gpu=config.use_gpu,
                              use_bow=config.use_bow,
+                             pretrain_epoch=config.pretrain_epoch,
+                             use_posterior=config.use_posterior,
                              concat=config.decode_concat)
 
     model_name = model.__class__.__name__

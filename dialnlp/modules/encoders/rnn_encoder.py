@@ -75,7 +75,6 @@ class RNNEncoder(nn.Module):
 
             if hidden is not None:
                 hidden = hidden.index_select(1, indices)[:, :num_valid]
-
         outputs, last_hidden = self.rnn(rnn_inputs, hidden)
 
         if self.bidirectional:

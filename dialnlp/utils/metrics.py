@@ -33,6 +33,11 @@ def accuracy(logits, targets, padding_idx=None):
     acc = acc.mean()
     return acc
 
+def attn_accuracy(logits, targets):
+    _, preds = logits.squeeze(1).max(dim=-1)
+    trues = (preds == targets).float()
+    acc = trues.mean()
+    return acc
 
 def bleu(hyps, refs):
     bleu_1 = []
