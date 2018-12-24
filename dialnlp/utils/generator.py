@@ -248,6 +248,10 @@ class TopKGenerator(object):
             preds = self.tgt_field.denumericalize(preds)
             scores = scores.tolist()
 
+            if 'cue' in batch:
+                cue = self.tgt_field.denumericalize(batch.cue[0].data)
+                enc_outputs.add(cue=cue)
+
             enc_outputs.add(src=src, tgt=tgt, preds=preds, scores=scores)
             result_batch = enc_outputs.flatten()
             results += result_batch

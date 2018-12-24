@@ -5,8 +5,8 @@
 # Copyright (c) 2018 Baidu.com, Inc. All Rights Reserved.
 #
 # File: run_seq2seq.py
-# Date: 2018/11/08 20:28:51
-# Author: chenchaotao@baidu.com
+# Date: 2018/12/23 18:47:51
+# Author: lianrongzhong@baidu.com
 #
 ################################################################################
 
@@ -19,8 +19,8 @@ import argparse
 import torch
 from datetime import datetime
 
-from dialnlp.inputters.corpus import SrcTgtCorpus
-from dialnlp.models.seq2seq import Seq2Seq
+from dialnlp.inputters.corpus import KnowledgeCorpus
+from dialnlp.models.knowledge_seq2seq import KnowledgeSeq2Seq
 from dialnlp.utils.engine import Trainer
 from dialnlp.utils.generator import TopKGenerator
 from dialnlp.utils.engine import evaluate, evaluate_generation
@@ -34,9 +34,9 @@ data_arg = parser.add_argument_group("Data")
 data_arg.add_argument("--data_dir", type=str, default="./data/toy/")
 data_arg.add_argument("--data_prefix", type=str, default="dial")
 data_arg.add_argument("--save_dir", type=str, default="./outputs/toy/")
-data_arg.add_argument("--embed_file", type=str, default=None)
-# data_arg.add_argument("--embed_file", type=str,
-#                       default="./embeddings/sgns.weibo.300d.txt")
+# data_arg.add_argument("--embed_file", type=str, default=None)
+data_arg.add_argument("--embed_file", type=str,
+                       default="./embeddings/glove.840B.300d.txt")
 
 # Network
 net_arg = parser.add_argument_group("Network")
@@ -62,6 +62,8 @@ train_arg.add_argument("--dropout", type=float, default=0.3)
 train_arg.add_argument("--num_epochs", type=int, default=10)
 train_arg.add_argument("--lr_decay", type=float, default=None)
 train_arg.add_argument("--use_embed", type=str2bool, default=True)
+train_arg.add_argument("--use_bow", type=str2bool, default=True)
+train_arg.add_argument("--decode_concat", type=str2bool, default=False)
 
 # Geneation
 gen_arg = parser.add_argument_group("Generation")
@@ -94,14 +96,14 @@ def main():
     torch.cuda.set_device(device)
 
     # Data definition
-    corpus = SrcTgtCorpus(data_dir=config.data_dir,
-                          data_prefix=config.data_prefix,
-                          min_freq=0,
-                          max_vocab_size=config.max_vocab_size,
-                          min_len=config.min_len,
-                          max_len=config.max_len,
-                          embed_file=config.embed_file,
-                          share_vocab=config.share_vocab)
+    corpus = KnowledgeCorpus(data_dir=config.data_dir,
+                             data_prefix=config.data_prefix,
+                             min_freq=0,
+                             max_vocab_size=config.max_vocab_size,
+                             min_len=config.min_len,
+                             max_len=config.max_len,
+                             embed_file=config.embed_file,
+                             share_vocab=config.share_vocab)
     corpus.load()
 
     train_iter = corpus.create_batches(
@@ -112,18 +114,20 @@ def main():
         config.batch_size, "test", shuffle=False, device=device)
 
     # Model definition
-    model = Seq2Seq(src_vocab_size=corpus.SRC.vocab_size,
-                    tgt_vocab_size=corpus.TGT.vocab_size,
-                    embed_size=config.embed_size,
-                    hidden_size=config.hidden_size,
-                    padding_idx=corpus.padding_idx,
-                    num_layers=config.num_layers,
-                    bidirectional=config.bidirectional,
-                    attn_mode=config.attn,
-                    with_bridge=config.with_bridge,
-                    tie_embedding=config.tie_embedding,
-                    dropout=config.dropout,
-                    use_gpu=config.use_gpu)
+    model = KnowledgeSeq2Seq(src_vocab_size=corpus.SRC.vocab_size,
+                             tgt_vocab_size=corpus.TGT.vocab_size,
+                             embed_size=config.embed_size,
+                             hidden_size=config.hidden_size,
+                             padding_idx=corpus.padding_idx,
+                             num_layers=config.num_layers,
+                             bidirectional=config.bidirectional,
+                             attn_mode=config.attn,
+                             with_bridge=config.with_bridge,
+                             tie_embedding=config.tie_embedding,
+                             dropout=config.dropout,
+                             use_gpu=config.use_gpu,
+                             use_bow=config.use_bow,
+                             concat=config.decode_concat)
 
     model_name = model.__class__.__name__
 

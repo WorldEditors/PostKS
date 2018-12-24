@@ -172,7 +172,8 @@ class Trainer(object):
             metrics = self.model.iterate(inputs,
                                          optimizer=self.optimizer,
                                          grad_clip=self.grad_clip,
-                                         is_training=True)
+                                         is_training=True,
+                                         epoch=self.epoch)
             elapsed = time.time() - start_time
 
             train_mm.update(metrics)
@@ -331,6 +332,14 @@ def write_results(results, results_file):
         for result in results:
             f.write("Source : {}\n".format(result.src))
             f.write("Target : {}\n".format(result.tgt))
+            if "cue" in result.keys():
+                f.write("Cue : {}\n".format(result.cue))
+            if "prior_attn" in result.keys():
+                f.write("Prior Attn: {}\n".format(' '.join([str(value) for value in result.prior_attn.data.tolist()])))
+            if "posterior_attn" in result.keys():
+                f.write("Posterior Attn: {}\n".format(' '.join([str(value) for value in result.posterior_attn.data.tolist()])))
+            if "indexs" in result.keys():
+                f.write("Indexs : {}\n".format(result.indexs))
             for pred, score in zip(result.preds, result.scores):
                 f.write("Predict: {} ({:.3f})\n".format(pred, score))
             f.write("\n")

@@ -144,7 +144,7 @@ class Seq2Seq(BaseModel):
         metrics.add(loss=loss)
         return metrics
 
-    def iterate(self, inputs, optimizer=None, grad_clip=None, is_training=True):
+    def iterate(self, inputs, optimizer=None, grad_clip=None, is_training=True, epoch=-1):
         enc_inputs = inputs
         dec_inputs = inputs.tgt[0][:, :-1], inputs.tgt[1]-1
         target = inputs.tgt[0][:, 1:]

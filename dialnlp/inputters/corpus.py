@@ -227,3 +227,84 @@ class SrcTgtCorpus(Corpus):
         print(
             f"Read {len(data)} {data_type.upper()} examples ({filtered_num} filtered)")
         return data
+
+class KnowledgeCorpus(Corpus):
+    def __init__(self,
+                 data_dir,
+                 data_prefix,
+                 min_freq=0,
+                 max_vocab_size=None,
+                 min_len=0,
+                 max_len=100,
+                 embed_file=None,
+                 share_vocab=False,
+                 with_label=False):
+        super(KnowledgeCorpus, self).__init__(data_dir=data_dir,
+                                              data_prefix=data_prefix,
+                                              min_freq=min_freq,
+                                              max_vocab_size=max_vocab_size)
+        self.min_len = min_len
+        self.max_len = max_len
+        self.share_vocab = share_vocab
+        self.with_label = with_label
+
+        self.SRC = TextField(tokenize_fn=tokenize,
+                             embed_file=embed_file)
+        if self.share_vocab:
+            self.TGT = self.SRC
+            self.CUE = self.SRC
+        else:
+            self.TGT = TextField(tokenize_fn=tokenize,
+                                 embed_file=embed_file)
+            self.CUE = TextField(tokenize_fn=tokenize,
+                                 embed_file=embed_file)
+
+        if self.with_label:
+            self.INDEX = NumberField()
+            self.fields = {'src': self.SRC, 'tgt': self.TGT, 'cue': self.CUE, 'index': self.INDEX}
+        else:
+            self.fields = {'src': self.SRC, 'tgt': self.TGT, 'cue': self.CUE}
+
+        def src_filter_pred(src):
+            return min_len <= len(self.SRC.tokenize_fn(src)) <= max_len
+
+        def tgt_filter_pred(tgt):
+            return min_len <= len(self.TGT.tokenize_fn(tgt)) <= max_len
+
+        self.filter_pred = lambda ex: src_filter_pred(
+            ex['src']) and tgt_filter_pred(ex['tgt'])
+
+    def load(self):
+        if not (os.path.exists(self.prepared_data_file) and
+                os.path.exists(self.prepared_vocab_file)):
+            self.build()
+        self.load_vocab(self.prepared_vocab_file)
+        self.load_data(self.prepared_data_file)
+
+        self.padding_idx = self.TGT.stoi[self.TGT.pad_token]
+
+    def read_data(self, data_file, data_type="train"):
+        data = []
+        filtered = 0
+        with open(data_file, "r", encoding="utf-8") as f:
+            for line in f:
+                if self.with_label:
+                    src, tgt, knowledge, label = line.strip().split('\t')[:4]
+                    filter_knowledge = []
+                    for sent in knowledge.split(''):
+                        filter_knowledge.append(' '.join(sent.split()[:self.max_len]))
+                    data.append({'src': src, 'tgt': tgt, 'cue': filter_knowledge, 'index': label})
+                else:
+                    src, tgt, knowledge = line.strip().split('\t')[:3]
+                    filter_knowledge = []
+                    for sent in knowledge.split(''):
+                        filter_knowledge.append(' '.join(sent.split()[:self.max_len]))
+                    data.append({'src': src, 'tgt': tgt, 'cue':filter_knowledge})
+
+        filtered_num = len(data)
+        if self.filter_pred is not None:
+            data = [ex for ex in data if self.filter_pred(ex)]
+        filtered_num -= len(data)
+        print(
+            f"Read {len(data)} {data_type.upper()} examples ({filtered_num} filtered)")
+        return data
