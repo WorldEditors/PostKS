@@ -140,7 +140,7 @@ class DSSM(BaseModel):
         metrics.add(num_samples=num_samples)
         return metrics
 
-    def iterate(self, inputs, optimizer=None, grad_clip=None, is_training=True):
+    def iterate(self, inputs, optimizer=None, grad_clip=None, is_training=True, epoch=-1):
         src_inputs = inputs.src[0][:, 1:-1], inputs.src[1]-2
         pos_tgt_inputs = inputs.tgt[0][:, 1:-1], inputs.tgt[1]-2
 
