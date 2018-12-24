@@ -245,7 +245,8 @@ class KnowledgeSeq2Seq(BaseModel):
         metrics.add(nll=(nll_loss, num_words), acc=acc)
 
         if self.use_posterior:
-            kl_loss = self.kl_loss(torch.log(outputs.prior_attn+1e-10), outputs.posterior_attn.detach())
+            kl_loss = self.kl_loss(torch.log(outputs.prior_attn+1e-10),
+                                   outputs.posterior_attn.detach())
             if epoch == -1 or epoch > self.pretrain_epoch or self.use_bow is not True:
                 loss += nll_loss
                 loss += kl_loss
