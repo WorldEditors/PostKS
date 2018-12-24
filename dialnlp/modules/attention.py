@@ -23,6 +23,7 @@ class Attention(nn.Module):
                  memory_size=None,
                  hidden_size=None,
                  mode="mlp",
+                 return_attn_only=False,
                  project=False):
         super(Attention, self).__init__()
         assert (mode in ["dot", "general", "mlp"]), (
@@ -33,6 +34,7 @@ class Attention(nn.Module):
         self.memory_size = memory_size or query_size
         self.hidden_size = hidden_size or query_size
         self.mode = mode
+        self.return_attn_only = return_attn_only
         self.project = project
 
         if mode == "general":
@@ -67,34 +69,37 @@ class Attention(nn.Module):
     def forward(self, query, memory, mask=None):
         """
         query: Tensor(batch_size, query_length, query_size)
-        memory: Tensor(batch_size, memory_max_length, memory_size)
-        mask: Tensor(batch_size, memory_max_length)
+        memory: Tensor(batch_size, memory_length, memory_size)
+        mask: Tensor(batch_size, memory_length)
         """
         if self.mode == "dot":
             assert query.size(-1) == memory.size(-1)
-            # (batch_size, query_length, memory_max_length)
+            # (batch_size, query_length, memory_length)
             attn = torch.bmm(query, memory.transpose(1, 2))
         elif self.mode == "general":
             assert self.memory_size == memory.size(-1)
             # (batch_size, query_length, memory_size)
             key = self.linear_query(query)
-            # (batch_size, query_length, memory_max_length)
+            # (batch_size, query_length, memory_length)
             attn = torch.bmm(key, memory.transpose(1, 2))
         else:
-            # (batch_size, query_length, memory_max_length, hidden_size)
+            # (batch_size, query_length, memory_length, hidden_size)
             hidden = self.linear_query(query).unsqueeze(
                 2) + self.linear_memory(memory).unsqueeze(1)
             key = self.tanh(hidden)
-            # (batch_size, query_length, memory_max_length)
+            # (batch_size, query_length, memory_length)
             attn = self.v(key).squeeze(-1)
 
         if mask is not None:
-            # (batch_size, query_length, memory_max_length)
+            # (batch_size, query_length, memory_length)
             mask = mask.unsqueeze(1).repeat(1, query.size(1), 1)
             attn.masked_fill_(mask, -float("inf"))
 
-        # (batch_size, query_length, memory_max_length)
+        # (batch_size, query_length, memory_length)
         weights = self.softmax(attn)
+        if self.return_attn_only:
+            return weights
+
         # (batch_size, query_length, memory_size)
         weighted_memory = torch.bmm(weights, memory)
 
