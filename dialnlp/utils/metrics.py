@@ -11,6 +11,7 @@
 ################################################################################
 
 import numpy as np
+import torch.nn.functional as F
 
 from collections import Counter
 from nltk.translate import bleu_score
@@ -44,6 +45,25 @@ def attn_accuracy(logits, targets):
     acc = trues.mean()
     return acc
 
+def perplexity(logits, targets, weight=None, padding_idx=None):
+    """
+    logits: (batch_size, max_len, vocab_size)
+    targets: (batch_size, max_len)
+    """
+    batch_size = logits.size(0)
+    if weight is None and padding_idx is not None:
+        weight = torch.ones(logits.size(-1))
+        weight[padding_idx] = 0
+    nll = F.nll_loss(input=logits.view(-1, logits.size(-1)),
+                     target=targets.contiguous().view(-1),
+                     weight=weight,
+                     reduction='none')
+    nll = nll.view(batch_size, -1).sum(dim=1)
+    if padding_idx is not None:
+        word_cnt = targets.ne(padding_idx).float().sum()
+        nll = nll / word_cnt
+    ppl = nll.exp()
+    return ppl
 
 def bleu(hyps, refs):
     bleu_1 = []

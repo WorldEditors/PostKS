@@ -37,7 +37,8 @@ class RNNDecoder(nn.Module):
                  memory_size=None,
                  feature_size=None,
                  dropout=0.0,
-                 concat=False):
+                 concat=False,
+                 extend_attn=False):
         super(RNNDecoder, self).__init__()
 
         self.input_size = input_size
@@ -51,6 +52,7 @@ class RNNDecoder(nn.Module):
         self.feature_size = feature_size
         self.dropout = dropout
         self.concat = concat
+        self.extend_attn = extend_attn
 
         self.rnn_input_size = self.input_size
         self.out_input_size = self.hidden_size
@@ -181,6 +183,12 @@ class RNNDecoder(nn.Module):
         out_input = torch.cat(out_input_list, dim=-1)
         state.hidden = new_hidden
 
+        if self.extend_attn and self.attn_mode is not None:
+            new_attn_memory = torch.cat([attn_memory, rnn_output], dim=1)
+            new_attn_mask = torch.cat([attn_mask, torch.zeros_like(attn_mask[:,:1])], dim=1)
+            attn_memory = new_attn_memory
+            attn_mask = new_attn_mask
+
         if is_training:
             return out_input, state, output
         else:
@@ -203,13 +211,23 @@ class RNNDecoder(nn.Module):
         # number of valid input (i.e. not padding index) in each time step
         num_valid_list = sequence_mask(sorted_lengths).int().sum(dim=0)
 
+        attn_memory, attn_mask = None, None
+
         for i, num_valid in enumerate(num_valid_list):
             dec_input = inputs[:num_valid, i]
             valid_state = state.slice_select(num_valid)
+            if attn_memory is not None:
+                valid_state.attn_memory = attn_memory[:num_valid]
+            if attn_mask is not None:
+                valid_state.attn_mask = attn_mask[:num_valid]
             out_input, valid_state, _ = self.decode(
                 dec_input, valid_state, is_training=True)
             state.hidden[:, :num_valid] = valid_state.hidden
             out_inputs[:num_valid, i] = out_input.squeeze(1)
+
+            if self.extend_attn:
+                attn_memory = valid_state.attn_memory
+                attn_mask = valid_state.attn_mask
 
         # Resort
         _, inv_indices = indices.sort()

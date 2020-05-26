@@ -16,6 +16,10 @@ from dialnlp.utils.misc import sequence_mask
 from dialnlp.utils.misc import list2tensor
 from dialnlp.utils.misc import Pack
 
+import json
+import urllib.request as request
+import random
+
 
 class TopKGenerator(object):
 
@@ -23,6 +27,7 @@ class TopKGenerator(object):
                  model,
                  src_field,
                  tgt_field,
+                 cue_field=None,
                  beam_size=5,
                  max_length=10,
                  ignore_unk=True,
@@ -32,6 +37,7 @@ class TopKGenerator(object):
         self.src_field = src_field
         self.tgt_field = tgt_field
         self.beam_size = beam_size
+        self.cue_field = cue_field
         self.k = self.beam_size
         self.max_length = max_length
         self.ignore_unk = ignore_unk
@@ -53,6 +59,13 @@ class TopKGenerator(object):
                 dec_state, num_candidates=num_candidates)
 
         return enc_outputs, preds, lens, scores
+
+    def get_knowledge_index(self, inputs, enc_hidden=None):
+        self.model.eval()
+
+        with torch.no_grad():
+            index = self.model.encode(inputs, enc_hidden, flag=True)
+        return index
 
     def decode(self, dec_state, num_candidates=5):
 
@@ -285,3 +298,74 @@ class TopKGenerator(object):
             print(f"Chabot: {pred}")
             # print(f"┗( T﹏T )┛: {pred}")
         print("[*] Chating ends")
+
+    def query(self, context, persona):
+        url = 'http://10.255.93.11:8188/api/chitchat'
+        data = {'context': context, 'persona': persona,
+                'episode_done': True}
+        req = json.dumps(data)
+        req = bytes(req, 'utf8')
+        res = request.urlopen(url, data=req)
+        res = json.loads(res.read())
+        return res
+
+
+    def self_play(self, self_play_file, save_file):
+        file1 = open(save_file, "w")
+        with open(self_play_file) as f:
+            for line in f:
+                cols = line.strip().split('\t')
+                parnter_persona = list2tensor(self.cue_field.numericalize([cols[1].split('')]))
+                parnter_persona_data = cols[1].split('')
+                your_persona = list2tensor(self.cue_field.numericalize([cols[2].split('')]))
+                your_persona_data = cols[2].split('')
+                data = cols[0]
+                conversation = []
+                conversation.append(data)
+                for i in range(7):
+                    inputs = Pack()
+                    src = self.src_field.numericalize([data])
+                    inputs.add(src=list2tensor(src))
+                    if i % 2 == 0:
+                        inputs.add(cue=your_persona)
+                    else:
+                        inputs.add(cue=parnter_persona)
+                    if self.use_gpu:
+                        inputs = inputs.cuda()
+                    # _, preds, _, _ = self.forward(inputs=inputs, num_candidates=1)
+                    index = self.get_knowledge_index(inputs=inputs)
+                    if i % 2 == 0:
+                        if index >= len(your_persona_data):
+                            index = random.randint(0, len(your_persona_data)-1)
+                        pred = self.query([data], [your_persona_data[index]])
+                    else:
+                        if index >= len(parnter_persona_data):
+                            index = random.randint(0, len(parnter_persona_data)-1)
+                        pred = self.query([data], [parnter_persona_data[index]])
+                    data = pred
+                    conversation.append(data)
+                file1.write(cols[2] + "\n")
+                file1.write(cols[1] + "\n")
+                file1.write("\t".join(conversation) + "\n")
+        file1.close()
+
+    def seq2seq_self_play(self, self_play_file, save_file):
+        file1 = open(save_file, "w")
+        with open(self_play_file) as f:
+            for line in f:
+                cols = line.strip().split('\t')
+                data = cols[0]
+                file1.write(data + "\n")
+                for i in range(7):
+                    inputs = Pack()
+                    src = self.src_field.numericalize([data])
+                    inputs.add(src=list2tensor(src))
+                    if self.use_gpu:
+                        inputs = inputs.cuda()
+                    _, preds, _, _ = self.forward(inputs=inputs, num_candidates=1)
+                    pred = self.tgt_field.denumericalize(preds[0][0])
+                    file1.write(pred + "\n")
+                    data = pred
+                file1.write('-'*30 + "\n")
+        file1.close()
+

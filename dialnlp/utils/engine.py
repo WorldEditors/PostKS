@@ -338,8 +338,12 @@ def write_results(results, results_file):
                 f.write("Prior Attn: {}\n".format(' '.join([str(value) for value in result.prior_attn.data.tolist()])))
             if "posterior_attn" in result.keys():
                 f.write("Posterior Attn: {}\n".format(' '.join([str(value) for value in result.posterior_attn.data.tolist()])))
+            if "gumbel_attn" in result.keys():
+                f.write("Gumbel Attn: {}\n".format(' '.join([str(value) for value in result.gumbel_attn.data.tolist()])))
             if "indexs" in result.keys():
                 f.write("Indexs : {}\n".format(result.indexs))
+            if "weights" in result.keys():
+                f.write("Weights : {}\n".format(result.weights))
             for pred, score in zip(result.preds, result.scores):
                 f.write("Predict: {} ({:.3f})\n".format(pred, score))
             f.write("\n")

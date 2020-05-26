@@ -31,41 +31,45 @@ parser = argparse.ArgumentParser()
 
 # Data
 data_arg = parser.add_argument_group("Data")
-data_arg.add_argument("--data_dir", type=str, default="./data/toy/")
-data_arg.add_argument("--data_prefix", type=str, default="dial")
-data_arg.add_argument("--save_dir", type=str, default="./outputs/toy/")
+data_arg.add_argument("--data_dir", type=str, default="./data/wizard/")
+data_arg.add_argument("--data_prefix", type=str, default="sample")
+data_arg.add_argument("--save_dir", type=str, default="./outputs/wizard/")
 data_arg.add_argument("--with_label", type=str2bool, default=False)
-# data_arg.add_argument("--embed_file", type=str, default=None)
-data_arg.add_argument("--embed_file", type=str,
-                       default="./embeddings/glove.840B.300d.txt")
+data_arg.add_argument("--embed_file", type=str, default=None)
+#data_arg.add_argument("--embed_file", type=str,
+#                       default="./embeddings/glove.840B.300d.txt")
 
 # Network
 net_arg = parser.add_argument_group("Network")
 net_arg.add_argument("--embed_size", type=int, default=300)
 net_arg.add_argument("--hidden_size", type=int, default=800)
 net_arg.add_argument("--bidirectional", type=str2bool, default=True)
-net_arg.add_argument("--max_vocab_size", type=int, default=40000)
-net_arg.add_argument("--min_len", type=int, default=5)
-net_arg.add_argument("--max_len", type=int, default=50)
+net_arg.add_argument("--max_vocab_size", type=int, default=20000)
+net_arg.add_argument("--min_len", type=int, default=0)
+net_arg.add_argument("--max_len", type=int, default=150)
 net_arg.add_argument("--num_layers", type=int, default=1)
-net_arg.add_argument("--attn", type=str, default='none',
+net_arg.add_argument("--attn", type=str, default='dot',
                      choices=['none', 'mlp', 'dot', 'general'])
 net_arg.add_argument("--share_vocab", type=str2bool, default=True)
-net_arg.add_argument("--with_bridge", type=str2bool, default=False)
+net_arg.add_argument("--with_bridge", type=str2bool, default=True)
 net_arg.add_argument("--tie_embedding", type=str2bool, default=True)
 
 # Training / Testing
 train_arg = parser.add_argument_group("Training")
 train_arg.add_argument("--optimizer", type=str, default="Adam")
-train_arg.add_argument("--lr", type=float, default=0.0002)
+train_arg.add_argument("--lr", type=float, default=0.0005)
 train_arg.add_argument("--grad_clip", type=float, default=5.0)
 train_arg.add_argument("--dropout", type=float, default=0.3)
-train_arg.add_argument("--num_epochs", type=int, default=10)
+train_arg.add_argument("--num_epochs", type=int, default=20)
 train_arg.add_argument("--pretrain_epoch", type=int, default=0)
 train_arg.add_argument("--lr_decay", type=float, default=None)
 train_arg.add_argument("--use_embed", type=str2bool, default=True)
 train_arg.add_argument("--use_bow", type=str2bool, default=True)
+train_arg.add_argument("--use_dssm", type=str2bool, default=False)
+train_arg.add_argument("--use_pg", type=str2bool, default=False)
+train_arg.add_argument("--use_gs", type=str2bool, default=True)
 train_arg.add_argument("--use_kd", type=str2bool, default=False)
+train_arg.add_argument("--weight_control", type=str2bool, default=False)
 train_arg.add_argument("--decode_concat", type=str2bool, default=False)
 train_arg.add_argument("--use_posterior", type=str2bool, default=False)
 
@@ -76,17 +80,24 @@ gen_arg.add_argument("--max_dec_len", type=int, default=30)
 gen_arg.add_argument("--ignore_unk", type=str2bool, default=True)
 gen_arg.add_argument("--length_average", type=str2bool, default=True)
 gen_arg.add_argument("--gen_file", type=str, default="./test.result")
+gen_arg.add_argument("--self_play_file", type=str, default="./self_play.test")
+gen_arg.add_argument("--play_file", type=str, default="./play.result")
+gen_arg.add_argument("--infer_file", type=str, default="./infer.test")
+
 
 # MISC
 misc_arg = parser.add_argument_group("Misc")
 misc_arg.add_argument("--gpu", type=int, default=-1)
 misc_arg.add_argument("--log_steps", type=int, default=50)
 misc_arg.add_argument("--valid_steps", type=int, default=100)
-misc_arg.add_argument("--batch_size", type=int, default=32)
+misc_arg.add_argument("--batch_size", type=int, default=128)
 misc_arg.add_argument("--ckpt", type=str)
 misc_arg.add_argument("--check", action="store_true")
 misc_arg.add_argument("--test", action="store_true")
+misc_arg.add_argument("--infer", action="store_true")
 misc_arg.add_argument("--interact", action="store_true")
+misc_arg.add_argument("--self_play", action="store_true")
+
 
 config = parser.parse_args()
 
@@ -117,6 +128,8 @@ def main():
         config.batch_size, "valid", shuffle=False, device=device)
     test_iter = corpus.create_batches(
         config.batch_size, "test", shuffle=False, device=device)
+    if config.infer is True:
+        test_iter = corpus.transform(config.infer_file, config.batch_size, device=device)
 
     # Model definition
     model = KnowledgeSeq2Seq(src_vocab_size=corpus.SRC.vocab_size,
@@ -132,8 +145,12 @@ def main():
                              dropout=config.dropout,
                              use_gpu=config.use_gpu,
                              use_bow=config.use_bow,
+                             use_dssm=config.use_dssm,
+                             use_pg=config.use_pg,
+                             use_gs=config.use_gs,
                              pretrain_epoch=config.pretrain_epoch,
                              use_posterior=config.use_posterior,
+                             weight_control=config.weight_control,
                              concat=config.decode_concat)
 
     model_name = model.__class__.__name__
@@ -142,6 +159,7 @@ def main():
     generator = TopKGenerator(model=model,
                               src_field=corpus.SRC,
                               tgt_field=corpus.TGT,
+                              cue_field=corpus.CUE,
                               beam_size=config.beam_size,
                               max_length=config.max_dec_len,
                               ignore_unk=config.ignore_unk,
@@ -152,6 +170,11 @@ def main():
     if config.interact and config.ckpt:
         model.load(config.ckpt)
         generator.interact()
+
+    # self play
+    if config.self_play and config.ckpt:
+        model.load(config.ckpt)
+        generator.self_play(config.self_play_file, config.play_file)
 
     # Testing
     elif config.test and config.ckpt:

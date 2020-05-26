@@ -1,11 +1,11 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 ########################################################################
-# 
+#
 # Copyright (c) 2018 Baidu.com, Inc. All Rights Reserved
-# 
+#
 ########################################################################
- 
+
 """
 File: knowledge_seq2eq.py
 Author: lianrongzhong(lianongzhong@baidu.com)
@@ -15,6 +15,7 @@ import torch
 import torch.nn as nn
 from torch.nn.utils import clip_grad_norm_
 import torch.nn.functional as F
+import pdb
 
 from dialnlp.models.base_model import BaseModel
 from dialnlp.modules.embedder import Embedder
@@ -24,6 +25,7 @@ from dialnlp.utils.criterions import NLLLoss
 from dialnlp.utils.misc import Pack
 from dialnlp.utils.metrics import accuracy
 from dialnlp.utils.metrics import attn_accuracy
+from dialnlp.utils.metrics import perplexity
 from dialnlp.modules.attention import Attention
 
 class KnowledgeSeq2Seq(BaseModel):
@@ -43,7 +45,11 @@ class KnowledgeSeq2Seq(BaseModel):
                  use_gpu=False,
                  use_bow=False,
                  use_kd=False,
+                 use_dssm=False,
                  use_posterior=False,
+                 weight_control=False,
+                 use_pg=False,
+                 use_gs=False,
                  concat=False,
                  pretrain_epoch=0):
         super(KnowledgeSeq2Seq, self).__init__()
@@ -62,9 +68,14 @@ class KnowledgeSeq2Seq(BaseModel):
         self.dropout = dropout
         self.use_gpu = use_gpu
         self.use_bow = use_bow
+        self.use_dssm = use_dssm
+        self.weight_control = weight_control
         self.use_kd = use_kd
+        self.use_pg = use_pg
+        self.use_gs = use_gs
         self.use_posterior = use_posterior
         self.pretrain_epoch = pretrain_epoch
+        self.baseline = 0
 
         enc_embedder = Embedder(num_embeddings=self.src_vocab_size,
                                 embedding_dim=self.embed_size,
@@ -140,23 +151,30 @@ class KnowledgeSeq2Seq(BaseModel):
                               out_features=self.tgt_vocab_size),
                     nn.LogSoftmax(dim=-1))
 
+        if self.use_dssm:
+            self.dssm_project = nn.Linear(in_features=self.hidden_size,
+                                          out_features=self.hidden_size)
+            self.mse_loss = torch.nn.MSELoss(reduction='mean')
+
         if self.use_kd:
             self.knowledge_dropout = nn.Dropout()
 
         if self.padding_idx is not None:
-            weight = torch.ones(self.tgt_vocab_size)
-            weight[self.padding_idx] = 0
+            self.weight = torch.ones(self.tgt_vocab_size)
+            self.weight[self.padding_idx] = 0
         else:
-            weight = None
-        self.nll_loss = NLLLoss(weight=weight,
+            self.weight = None
+        self.nll_loss = NLLLoss(weight=self.weight,
                                 ignore_index=self.padding_idx,
                                 reduction='mean')
+        # self.nll = torch.nn.NLLLoss(reduction='mean')
         self.kl_loss = torch.nn.KLDivLoss(size_average=True)
 
         if self.use_gpu:
             self.cuda()
+            self.weight = self.weight.cuda()
 
-    def encode(self, inputs, hidden=None, is_training=False):
+    def encode(self, inputs, hidden=None, is_training=False, flag=False):
         outputs = Pack()
         enc_inputs = _, lengths = inputs.src[0][:, 1:-1], inputs.src[1]-2
         enc_outputs, enc_hidden = self.encoder(enc_inputs, hidden)
@@ -178,8 +196,15 @@ class KnowledgeSeq2Seq(BaseModel):
         cue_attn = cue_attn.squeeze(1)
         outputs.add(prior_attn=cue_attn)
         indexs = cue_attn.max(dim=1)[1]
+        if flag:
+            return indexs.tolist()[0]
+        # for index in indexs.tolist():
+        #    print(index)
         # hard attention
-        knowledge = cue_outputs.gather(1, indexs.view(-1, 1, 1).repeat(1, 1, cue_outputs.size(-1)))
+        if self.use_gs:
+            knowledge = cue_outputs.gather(1, indexs.view(-1, 1, 1).repeat(1, 1, cue_outputs.size(-1)))
+        else:
+            knowledge = weighted_cue
 
         if self.use_posterior:
             tgt_enc_inputs = inputs.tgt[0][:, 1:-1], inputs.tgt[1]-2
@@ -195,24 +220,50 @@ class KnowledgeSeq2Seq(BaseModel):
             outputs.add(posterior_attn=posterior_attn)
             # Gumbel Softmax
             gumbel_attn = F.gumbel_softmax(torch.log(posterior_attn+1e-10), 0.1, hard=True)
+            outputs.add(gumbel_attn=gumbel_attn)
             knowledge = torch.bmm(gumbel_attn.unsqueeze(1), cue_outputs)
             #knowledge = posterior_weighted_cue
             indexs = gumbel_attn.max(-1)[1]
+            # for index in indexs.tolist():
+            #    print(index)
             # indexs = posterior_attn.max(dim=1)[1]
             if self.use_bow:
                 bow_logits = self.bow_output_layer(knowledge)
                 outputs.add(bow_logits=bow_logits)
+            if self.use_dssm:
+                dssm_knowledge = self.dssm_project(knowledge)
+                outputs.add(dssm=dssm_knowledge)
+                outputs.add(reply_vec=tgt_enc_hidden[-1])
+                # neg sample
+                neg_idx = torch.arange(enc_inputs[1].size(0)).type_as(enc_inputs[1])
+                neg_idx = (neg_idx + 1) % neg_idx.size(0)
+                neg_tgt_enc_inputs = tgt_enc_inputs[0][neg_idx], tgt_enc_inputs[1][neg_idx]
+                _, neg_tgt_enc_hidden = self.knowledge_encoder(neg_tgt_enc_inputs, hidden)
+                pos_logits = (enc_hidden[-1] * tgt_enc_hidden[-1]).sum(dim=-1)
+                neg_logits = (enc_hidden[-1] * neg_tgt_enc_hidden[-1]).sum(dim=-1)
+                outputs.add(pos_logits=pos_logits, neg_logits=neg_logits)
         elif is_training:
-            gumbel_attn = F.gumbel_softmax(torch.log(cue_attn+1e-10), 0.1, hard=True)
-            knowledge = torch.bmm(gumbel_attn.unsqueeze(1), cue_outputs)
-            indexs = gumbel_attn.max(-1)[1]
-            
+            if self.use_gs:
+                gumbel_attn = F.gumbel_softmax(torch.log(cue_attn+1e-10), 0.1, hard=True)
+                knowledge = torch.bmm(gumbel_attn.unsqueeze(1), cue_outputs)
+                indexs = gumbel_attn.max(-1)[1]
+            else:
+                knowledge = weighted_cue
+
         outputs.add(indexs=indexs)
         if 'index' in inputs.keys():
             outputs.add(attn_index=inputs.index)
 
         if self.use_kd:
             knowledge = self.knowledge_dropout(knowledge)
+
+        if self.weight_control:
+            weights = (enc_hidden[-1] * knowledge.squeeze(1)).sum(dim=-1)
+            weights = self.sigmoid(weights)
+            # norm in batch
+            # weights = weights / weights.mean().item()
+            outputs.add(weights=weights)
+            knowledge = knowledge * weights.view(-1,1,1).repeat(1, 1, knowledge.size(-1))
 
 
         dec_init_state = self.decoder.initialize_state(
@@ -238,6 +289,15 @@ class KnowledgeSeq2Seq(BaseModel):
         metrics = Pack(num_samples=num_samples)
         loss = 0
 
+        # test begin
+        # nll = self.nll(torch.log(outputs.posterior_attn+1e-10), outputs.attn_index)
+        # loss += nll
+        # attn_acc = attn_accuracy(outputs.posterior_attn, outputs.attn_index)
+        # metrics.add(attn_acc=attn_acc)
+        # metrics.add(loss=loss)
+        # return metrics
+        # test end
+
         logits = outputs.logits
         nll_loss = self.nll_loss(logits, target)
         num_words = target.ne(self.padding_idx).sum().item()
@@ -247,9 +307,6 @@ class KnowledgeSeq2Seq(BaseModel):
         if self.use_posterior:
             kl_loss = self.kl_loss(torch.log(outputs.prior_attn+1e-10),
                                    outputs.posterior_attn.detach())
-            if epoch == -1 or epoch > self.pretrain_epoch or self.use_bow is not True:
-                loss += nll_loss
-                loss += kl_loss
             metrics.add(kl=kl_loss)
             if self.use_bow:
                 bow_logits = outputs.bow_logits
@@ -258,9 +315,35 @@ class KnowledgeSeq2Seq(BaseModel):
                 bow = self.nll_loss(bow_logits, bow_labels)
                 loss += bow
                 metrics.add(bow=bow)
+            if self.use_dssm:
+                mse = self.mse_loss(outputs.dssm, outputs.reply_vec.detach())
+                loss += mse
+                metrics.add(mse=mse)
+                pos_logits = outputs.pos_logits
+                pos_target = torch.ones_like(pos_logits)
+                neg_logits = outputs.neg_logits
+                neg_target = torch.zeros_like(neg_logits)
+                pos_loss = F.binary_cross_entropy_with_logits(
+                        pos_logits, pos_target, reduction='none')
+                neg_loss = F.binary_cross_entropy_with_logits(
+                        neg_logits, neg_target, reduction='none')
+                loss += (pos_loss + neg_loss).mean()
+                metrics.add(pos_loss=pos_loss.mean(), neg_loss=neg_loss.mean())
+
+            if epoch == -1 or epoch > self.pretrain_epoch or \
+               (self.use_bow is not True and self.use_dssm is not True):
+                loss += nll_loss
+                loss += kl_loss
+                if self.use_pg:
+                    posterior_probs = outputs.posterior_attn.gather(1, outputs.indexs.view(-1, 1))
+                    reward = -perplexity(logits, target, self.weight, self.padding_idx) * 100
+                    pg_loss = -(reward.detach()-self.baseline) * posterior_probs.view(-1)
+                    pg_loss = pg_loss.mean()
+                    loss += pg_loss
+                    metrics.add(pg_loss=pg_loss, reward=reward.mean())
             if 'attn_index' in outputs:
                 attn_acc = attn_accuracy(outputs.posterior_attn, outputs.attn_index)
-            metrics.add(attn_acc=attn_acc)
+                metrics.add(attn_acc=attn_acc)
         else:
             loss += nll_loss
 
@@ -280,6 +363,8 @@ class KnowledgeSeq2Seq(BaseModel):
             raise ValueError("nan loss encountered")
 
         if is_training:
+            if self.use_pg:
+                self.baseline = 0.99*self.baseline + 0.01*metrics.reward.item()
             assert optimizer is not None
             optimizer.zero_grad()
             loss.backward()
